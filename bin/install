@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+
+set -eo pipefail
+
+function get_os() {
+    local os
+    os=$(uname -s)
+    case "${os}" in
+        Linux*)     echo linux;;
+        Darwin*)    echo darwin;;
+        *)          (>&2 echo "unsupported OS: ${os}" && exit 1)
+    esac
+}
+
+function get_arch() {
+    local arch
+    arch=$(uname -m)
+    case "${arch}" in
+        aarch64*)   echo arm64;;
+        x86_64*)    echo amd64;;
+        *)          (>&2 echo "unsupported CPU architecture: ${arch}" && exit 1)
+    esac
+}
+
+function get_download_url() {
+    local version="$1"
+    local os
+    os=$(get_os)
+    local arch
+    arch=$(get_arch)
+
+    curl -s "https://api.github.com/repos/etcd-io/etcd/releases/tags/${version}" | \
+        jq -r '.assets[] |
+                    select(.name | contains("etcd") and contains("'${os}'") and contains("'${arch}'")) |
+                    .browser_download_url'
+}
+
+function download() {
+    local install_path="$1"
+
+    read -r url
+
+    mkdir -p ${install_path}/bin
+
+    echo "Download from ${url} to ${install_path}"
+
+    if [[ "${url}" =~ \.zip ]]; then
+        curl -L "${url}" -o /tmp/etcd.zip
+        unzip /tmp/etcd.zip -d /tmp/etcd
+        mv -v /tmp/etcd/*/* ${install_path}/bin
+        rm -rfv /tmp/etcd /tmp/etcd.zip
+        ${install_path}/bin/etcdctl version
+        return
+    fi
+
+    if [[ "${url}" =~ \.tar.gz ]]; then
+        curl -L "${url}" | tar --strip-components=1 -xzvf - -C ${install_path}/bin
+        ${install_path}/bin/etcdctl version
+        return
+    fi
+
+    echo "unsupported archive format"
+    exit 1
+}
+
+# append `v` to version number. `v` was stripped off when doing `asdf list-all` for compatibility with `asdf latest`
+VERSION="v${ASDF_INSTALL_VERSION}"
+get_download_url "${VERSION}" | \
+    download "${ASDF_INSTALL_PATH}"
